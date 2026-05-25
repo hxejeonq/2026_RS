@@ -1,0 +1,16 @@
+# Ignore the MovieLens 100K dataset
+/ml-100k
+
+# Ignore the virtual environment directory
+/venv
+
+# Ignore Python bytecode files
+__pycache__/
+*.pyc
+*.pyd
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore results and model files
+/results
