@@ -234,12 +234,18 @@ for k in k_list:
     user_n_list.append(n)
     print(f"k={k} P={p:.4f} NDCG={n:.4f}")
 
+best_k_user = k_list[np.argmax(user_p_list)]
+print(f"[BEST USER K] = {best_k_user}") 
+
 print("\n===== ITEM CF =====")
 for k in k_list:
     p, n = evaluate(recommend_item, item_sim, train_user, val_user, k)
     item_p_list.append(p)
     item_n_list.append(n)
     print(f"k={k} P={p:.4f} NDCG={n:.4f}")
+
+best_k_item = k_list[np.argmax(item_p_list)]
+print(f"[BEST ITEM K] = {best_k_item}")  
 
 # =========================
 # ROC (VALIDATION ONLY)
