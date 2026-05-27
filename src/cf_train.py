@@ -1,6 +1,8 @@
 import numpy as np
 import pickle
 import os
+import csv
+import random
 from collections import defaultdict
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_curve, auc
@@ -87,14 +89,12 @@ def compute_item_similarity(item_dict, lambda_shrink=10, min_common=5):
 
     user_mean = {}
 
-    for i in items:
-        for u in item_dict[i]:
-            if u not in user_mean:
-                ratings = []
-                for it in item_dict:
-                    if u in item_dict[it]:
-                        ratings.append(item_dict[it][u])
-                user_mean[u] = np.mean(ratings)
+    for u in set(u for i in item_dict for u in item_dict[i]):
+        ratings = []
+        for it in item_dict:
+            if u in item_dict[it]:
+                ratings.append(item_dict[it][u])
+        user_mean[u] = np.mean(ratings)
 
     for i in items:
         for j in items:
@@ -119,6 +119,43 @@ def compute_item_similarity(item_dict, lambda_shrink=10, min_common=5):
             item_sim[j][i] = sim
 
     return item_sim
+
+
+# =========================
+# Rating Prediction
+# ========================
+def predict_user_rating(u, i, sim, train_dict):
+    if u not in train_dict:
+        return 0
+
+    user_mean = np.mean(list(train_dict[u].values()))
+
+    num, den = 0, 0
+
+    for v, s in sim[u].items():
+        if v in train_dict and i in train_dict[v]:
+            v_mean = np.mean(list(train_dict[v].values()))
+            num += s * (train_dict[v][i] - v_mean)
+            den += abs(s)
+
+    return user_mean + num / (den + 1e-8)
+
+
+def predict_item_rating(u, i, sim, train_dict):
+    if u not in train_dict:
+        return 0
+
+    user_mean = np.mean(list(train_dict[u].values()))
+
+    num, den = 0, 0
+
+    for j, r in train_dict[u].items():
+        if j in sim and i in sim[j]:
+            s = sim[j][i]
+            num += s * (r - user_mean)
+            den += abs(s)
+
+    return user_mean + num / (den + 1e-8)
 
 
 # =========================
@@ -156,6 +193,8 @@ def recommend_item(user, sim, train_dict, k):
 
     if user not in train_dict:
         return []
+    
+    user_mean = np.mean(list(train_dict[user].values()))
 
     for i in train_dict[user]:
         if i not in sim:
@@ -163,7 +202,7 @@ def recommend_item(user, sim, train_dict, k):
 
         for j, s in sorted(sim[i].items(), key=lambda x: x[1], reverse=True)[:k]:
             if j not in train_dict[user]:
-                scores[j] += s * train_dict[user][i]
+                scores[j] += s * (train_dict[user][i] - user_mean)
 
     return sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
@@ -171,9 +210,9 @@ def recommend_item(user, sim, train_dict, k):
 # =========================
 # METRICS
 # =========================
-def precision_at_k(recs, true_items):
-    rec_items = [i for i, _ in recs]
-    return len(set(rec_items) & set(true_items)) / (len(rec_items) + 1e-8)
+def precision_at_k(recs, true_items, k):
+    rec_items = [i for i, _ in recs[:k]]
+    return len(set(rec_items) & set(true_items)) / k
 
 
 def dcg(rel):
@@ -187,6 +226,19 @@ def ndcg_at_k(recs, true_items, k):
     return dcg(rel) / (dcg(ideal) + 1e-8)
 
 
+def compute_rmse(predict_func, sim, train_dict, val_data):
+    errors = []
+
+    for u, i, r in val_data:
+        if u not in train_dict:
+            continue
+
+        pred = predict_func(u, i, sim, train_dict)
+        errors.append((r - pred) ** 2)
+
+    return np.sqrt(np.mean(errors))
+
+
 def evaluate(recommender, sim, train_dict, val_dict, k):
     p = n = 0
     cnt = 0
@@ -198,17 +250,17 @@ def evaluate(recommender, sim, train_dict, val_dict, k):
         true_items = set(val_dict[u].keys())
         recs = recommender(u, sim, train_dict, k)
 
-        p += precision_at_k(recs, true_items)
+        p += precision_at_k(recs, true_items, k)
         n += ndcg_at_k(recs, true_items, k)
         cnt += 1
 
-    return p / cnt, n / cnt
+    return p / (cnt + 1e-8), n / (cnt + 1e-8)
 
 
 # =========================
 # RUN
 # =========================
-data = load_data("D:/HyeJeong/SungShin/3-1/RS/2026_RS/ml-100k/ml-100k/ua.base")
+data = load_data("ml-100k/ua.base")    # 경로는 수정
 
 train_data, val_data = train_test_split(data, test_size=0.2, random_state=42)
 
@@ -225,9 +277,46 @@ k_list = [5, 10, 20, 50, 100]
 user_p_list, user_n_list = [], []
 item_p_list, item_n_list = [], []
 
-best_k_user = best_k_item = 10
+# =========================
+# SAVE VALIDATION PREDICTIONS
+# =========================
 
-print("===== USER CF =====")
+# USER CF
+with open("results/user_cf_val_predictions.csv", "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["user_id", "item_id", "true_rating", "predicted_rating"])
+
+    for u, i, r in val_data:
+        if u not in train_user:
+            continue
+
+        pred = predict_user_rating(u, i, user_sim, train_user)
+        writer.writerow([u, i, r, pred])
+
+
+# ITEM CF
+with open("results/item_cf_val_predictions.csv", "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["user_id", "item_id", "true_rating", "predicted_rating"])
+
+    for u, i, r in val_data:
+        if u not in train_user:
+            continue
+
+        pred = predict_item_rating(u, i, item_sim, train_user)
+        writer.writerow([u, i, r, pred])
+
+
+print("validation prediction CSV 저장")
+
+rmse_user = compute_rmse(predict_user_rating, user_sim, train_user, val_data)
+rmse_item = compute_rmse(predict_item_rating, item_sim, train_user, val_data)
+
+print("\n===== RMSE =====")
+print("USER RMSE:", rmse_user)
+print("ITEM RMSE:", rmse_item)
+
+print("\n===== USER CF =====")
 for k in k_list:
     p, n = evaluate(recommend_user, user_sim, train_user, val_user, k)
     user_p_list.append(p)
@@ -250,25 +339,36 @@ print(f"[BEST ITEM K] = {best_k_item}")
 # =========================
 # ROC (VALIDATION ONLY)
 # =========================
-def get_roc(recommender, sim, train_dict, val_dict, k):
+def get_roc(predict_func, sim, train_dict, val_dict, all_items, sample_items=300, sample_users=300):
     scores, labels = [], []
 
-    for u in val_dict:
+    users = list(val_dict.keys())
+    sampled_users = random.sample(users, min(sample_users, len(users)))
+
+    for u in sampled_users:
         if u not in train_dict:
             continue
 
         true_items = set(val_dict[u].keys())
-        recs = recommender(u, sim, train_dict, k)
 
-        for i, s in recs:
+        # 아이템 샘플링
+        sampled_items = random.sample(all_items, min(sample_items, len(all_items)))
+
+        for i in sampled_items:
+            if i in train_dict[u]:
+                continue
+
+            s = predict_func(u, i, sim, train_dict)
             scores.append(s)
             labels.append(1 if i in true_items else 0)
 
     return scores, labels
 
 
-u_s, u_l = get_roc(recommend_user, user_sim, train_user, val_user, best_k_user)
-i_s, i_l = get_roc(recommend_item, item_sim, train_user, val_user, best_k_item)
+all_items = list(train_item.keys())
+
+u_s, u_l = get_roc(predict_user_rating, user_sim, train_user, val_user, all_items)
+i_s, i_l = get_roc(predict_item_rating, item_sim, train_user, val_user, all_items)
 
 fpr_u, tpr_u, _ = roc_curve(u_l, u_s)
 fpr_i, tpr_i, _ = roc_curve(i_l, i_s)
