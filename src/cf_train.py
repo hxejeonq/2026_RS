@@ -260,9 +260,9 @@ def evaluate(recommender, sim, train_dict, val_dict, k):
 # =========================
 # RUN
 # =========================
-data = load_data("ml-100k/ua.base")    # 경로는 수정
+data = load_data("ml-100k/ua.base")
 
-train_data, val_data = train_test_split(data, test_size=0.2, random_state=42)
+train_data, val_data = train_test_split(data, test_size=0.1, random_state=42)
 
 train_user, train_item = build_matrix(train_data)
 val_user, _ = build_matrix(val_data)
@@ -337,7 +337,7 @@ best_k_item = k_list[np.argmax(item_p_list)]
 print(f"[BEST ITEM K] = {best_k_item}")  
 
 # =========================
-# ROC (VALIDATION ONLY)
+# ROC
 # =========================
 def get_roc(predict_func, sim, train_dict, val_dict, all_items, sample_items=300, sample_users=300):
     scores, labels = [], []
