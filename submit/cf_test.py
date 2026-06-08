@@ -2,9 +2,7 @@ import pickle
 import numpy as np
 from collections import defaultdict
 
-
-total_item_count = 1680
-base_path = r"D:\HyeJeong\SungShin\3-1\RS\2026_RS"
+TOTAL_ITEM_COUNT = 1680
 
 
 # =========================
@@ -33,6 +31,7 @@ def recommend_user(user, model):
     sim_users = sorted(sim[user].items(), key=lambda x: x[1], reverse=True)[:k]
 
     scores = defaultdict(float)
+
     for v, s in sim_users:
         if v not in train:
             continue
@@ -51,10 +50,10 @@ def recommend_item(user, model):
     train = model["train"]
     k = model["k"]
 
-    scores = defaultdict(float)
-
     if user not in train:
         return []
+
+    scores = defaultdict(float)
 
     for item, r in train[user].items():
         if item not in sim:
@@ -72,99 +71,97 @@ def recommend_item(user, model):
 # =========================
 # METRICS
 # =========================
-def precision(recs, true):
+def precision_at_k(recs, true):
     return len(set(recs) & set(true)) / (len(recs) + 1e-8)
 
 
 def novelty(all_recs, item_cnt):
-    return np.mean([-np.log(item_cnt[i] + 1) for u in all_recs for i in all_recs[u]])
+    scores = []
+    for u in all_recs:
+        for i in all_recs[u]:
+            scores.append(-np.log(item_cnt[i] + 1))
+    return np.mean(scores)
 
 
 def diversity(all_recs):
     users = list(all_recs.keys())
-    score = []
+    sims = []
+
     for i in range(len(users)):
         for j in range(i + 1, len(users)):
-            score.append(len(set(all_recs[users[i]]) & set(all_recs[users[j]])))
-    return np.mean(score)
+            sims.append(len(set(all_recs[users[i]]) & set(all_recs[users[j]])))
+
+    return np.mean(sims) if sims else 0
 
 
-def coverage(all_recs, total_item_count):
-    all_items = set()
-    for user in all_recs:
-        for item in all_recs[user]:
-            all_items.add(item)
-    return len(all_items) / total_item_count
+def coverage(all_recs, total_items):
+    items = set()
+    for u in all_recs:
+        items.update(all_recs[u])
+    return len(items) / total_items
+
+
+def rmse(model, test, recommend_func):
+    se = 0
+    n = 0
+
+    for u in test:
+        recs = recommend_func(u, model)
+
+        rec_set = set(recs)
+
+        for item in test[u]:
+            pred = 1.0 if item in rec_set else 0.0
+            se += (1 - pred) ** 2
+            n += 1
+
+    return np.sqrt(se / (n + 1e-8))
 
 
 # =========================
-# 평가 함수 (공통)
+# EVALUATION
 # =========================
 def evaluate(model, test, recommend_func):
     all_recs = {}
     item_cnt = defaultdict(int)
 
-    p = 0
-
     for u in test:
         recs = recommend_func(u, model)
         all_recs[u] = recs
 
-        p += precision(recs, test[u])
-
         for i in recs:
             item_cnt[i] += 1
 
-    p /= len(test)
+    precision = np.mean([
+        precision_at_k(all_recs[u], test[u]) for u in test
+    ])
 
     return {
-        "precision": p,
+        "precision": precision,
         "novelty": novelty(all_recs, item_cnt),
         "diversity": diversity(all_recs),
-        "coverage": coverage(all_recs, total_item_count)
-    }, all_recs
+        "coverage": coverage(all_recs, TOTAL_ITEM_COUNT)
+    }
 
 
-def save_recommendations(all_recs, filename):
-    with open(filename, "w", encoding="utf-8") as f:
-        for user, recs in all_recs.items():
-            rec_str = ", ".join(map(str, recs))
-            f.write(f"User {user}: [{rec_str}]\n")
-
-    print("Saved to:", filename)
-
-    
 # =========================
-# LOAD
+# RUN ONLY EVAL
 # =========================
-test = load_test(r"D:\HyeJeong\SungShin\3-1\RS\2026_RS\ml-100k\ml-100k\ua.test")
+test = load_test(r"ml-100k\ua.test")
 
 model_user = pickle.load(open("results/model_user.pkl", "rb"))
 model_item = pickle.load(open("results/model_item.pkl", "rb"))
 
-
-# =========================
-# RUN
-# =========================
-result_user, recs_user = evaluate(model_user, test, recommend_user)
-result_item, recs_item = evaluate(model_item, test, recommend_item)
-
-
-# =========================
-# PRINT & SAVE
-# =========================
 print("===== USER CF =====")
-print("Precision:", result_user["precision"])
-print("Novelty:", result_user["novelty"])
-print("Diversity:", result_user["diversity"])
-print("Coverage:", result_user["coverage"])
+res_user = evaluate(model_user, test, recommend_user)
+rmse_user = rmse(model_user, test, recommend_user)
+
+print(res_user)
+print("RMSE:", rmse_user)
 
 print("\n===== ITEM CF =====")
-print("Precision:", result_item["precision"])
-print("Novelty:", result_item["novelty"])
-print("Diversity:", result_item["diversity"])
-print("Coverage:", result_item["coverage"])
-print("\n")
+res_item = evaluate(model_item, test, recommend_item)
+rmse_item = rmse(model_item, test, recommend_item)
 
-save_recommendations(recs_user, base_path + r"\results" + r"\recommend_user.txt")
-save_recommendations(recs_item, base_path + r"\results" + r"\recommend_item.txt")
+print(res_item)
+print("RMSE:", rmse_item)
